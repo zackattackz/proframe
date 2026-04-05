@@ -2,7 +2,7 @@
 
 ;; Author: Zachary Hanham
 ;; URL: https://github.com/zackattackz/proframe
-;; Version: 0.2.0
+;; Version: 0.2.1
 ;; Package-Requires: ((emacs "29.1") (beframe "1.5.0"))
 
 ;; This package is free software; you can redistribute it and/or modify
@@ -246,22 +246,22 @@ Priority: project frame > scratch frame > new frame."
       (proframe-ensure-scratch-frame))))
 
 (defun proframe-display-buffer-in-app-frame (buffer alist)
-  "Display BUFFER in a dedicated app frame.
-ALIST key `app-name' specifies the frame identity (e.g. \"Gnus\").
+  "Display BUFFER in its proframe.
+ALIST key `app-name' specifies a dedicated app frame identity; without it,
+the buffer is routed to its home frame.
 
 Suitable for use in `display-buffer-alist':
 
   (add-to-list \\='display-buffer-alist
     \\='(\"\\\\*Group\\\\*\" (proframe-display-buffer-in-app-frame)
       (app-name . \"Gnus\")))"
-  (let* ((name (alist-get 'app-name alist))
-         (frame (or (proframe-find-frame name)
-                    (car (proframe-ensure-frame name)))))
+  (when-let* ((name (alist-get 'app-name alist)))
     (with-current-buffer buffer
-      (setq proframe--app-root name))
-    (let ((window (frame-selected-window frame)))
-      (proframe-focus-frame frame)
-      (window--display-buffer buffer window 'reuse alist))))
+      (setq proframe--app-root name)))
+  (let* ((frame (proframe-buffer-home-frame buffer t))
+         (window (frame-selected-window frame)))
+    (proframe-focus-frame frame)
+    (window--display-buffer buffer window 'reuse alist)))
 
 (defun proframe-switch-project (dir)
   "Switch the current frame to project DIR.
