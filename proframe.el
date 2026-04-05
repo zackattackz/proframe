@@ -2,7 +2,7 @@
 
 ;; Author: Zachary Hanham
 ;; URL: https://github.com/zackattackz/proframe
-;; Version: 0.1.0
+;; Version: 0.2.0
 ;; Package-Requires: ((emacs "29.1") (beframe "1.5.0"))
 
 ;; This package is free software; you can redistribute it and/or modify
@@ -263,48 +263,32 @@ Suitable for use in `display-buffer-alist':
       (proframe-focus-frame frame)
       (window--display-buffer buffer window 'reuse alist))))
 
-(defun proframe--project-switch-with-retry (fn dir)
-  "Call FN with DIR, re-prompting for project command on C-g.
-Re-signals quit only when the user aborts at the command menu itself,
-not when quitting from within an individual command."
-  (catch 'proframe--done
-    (while t
-      (let ((dispatched nil))
-        (condition-case _
-            (cl-letf (((symbol-function 'project--switch-project-command)
-                       (let ((orig (symbol-function
-                                    'project--switch-project-command)))
-                         (lambda ()
-                           (let ((cmd (funcall orig)))
-                             (setq dispatched cmd)
-                             cmd)))))
-              (funcall fn dir)
-              (throw 'proframe--done nil))
-          (quit
-           (unless dispatched
-             (signal 'quit nil))))))))
-
-(defun proframe--project-switch-in-frame (fn dir)
-  "Route `project-switch-project' to a dedicated frame."
+(defun proframe-switch-project (dir)
+  "Switch the current frame to project DIR.
+If a frame already exists for DIR, focus it instead.
+Then run `project-switch-project' for command dispatch."
+  (interactive (list (project-prompt-project-dir)))
   (let* ((root (expand-file-name dir))
          (existing (proframe-find-frame root)))
     (if existing
         (progn
           (proframe-focus-frame existing)
-          (proframe--project-switch-with-retry fn dir))
-      (pcase-let* ((`(,target . ,new-p) (proframe-ensure-frame root)))
-        (condition-case _
-            (progn
-              (proframe--project-switch-with-retry fn dir)
-              (beframe--modify-buffer-list
-               :assume
-               (mapcar #'window-buffer (window-list target 'nomini))
-               :no-message))
-          (quit
-           (if new-p
-               (delete-frame target)
-             (proframe-update-identity target nil))
-           (signal 'quit nil)))))))
+          (project-switch-project dir))
+      (project-switch-project dir)
+      (proframe-update-identity (selected-frame) root))))
+
+(defun proframe-switch-project-other-frame (dir)
+  "Open project DIR in a dedicated frame and run a project command.
+Reuses an existing frame for DIR if one exists, otherwise creates one.
+Cleans up a newly created frame if the user quits."
+  (interactive (list (project-prompt-project-dir)))
+  (pcase-let* ((root (expand-file-name dir))
+               (`(,frame . ,new-p) (proframe-ensure-frame root)))
+    (condition-case _
+        (project-switch-project dir)
+      (quit
+       (when new-p (delete-frame frame))
+       (signal 'quit nil)))))
 
 (defun proframe--on-delete-frame (frame)
   "Clear root from FRAME before it is deleted."
@@ -314,21 +298,25 @@ not when quitting from within an individual command."
   "Recompute frame names after a frame is deleted."
   (proframe-recompute-names))
 
+(defvar proframe-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-x p p") #'proframe-switch-project)
+    (define-key map (kbd "C-x 5 p") #'proframe-switch-project-other-frame)
+    map)
+  "Keymap for `proframe-mode'.")
+
 ;;;###autoload
 (define-minor-mode proframe-mode
   "One frame per project, powered by beframe."
   :global t
   :group 'proframe
+  :keymap proframe-mode-map
   (if proframe-mode
       (progn
         (beframe-mode 1)
-        (advice-add 'project-switch-project
-                    :around #'proframe--project-switch-in-frame)
         (add-hook 'delete-frame-functions #'proframe--on-delete-frame)
         (add-hook 'after-delete-frame-functions
                   #'proframe--after-delete-frame))
-    (advice-remove 'project-switch-project
-                   #'proframe--project-switch-in-frame)
     (remove-hook 'delete-frame-functions #'proframe--on-delete-frame)
     (remove-hook 'after-delete-frame-functions
                  #'proframe--after-delete-frame)))
